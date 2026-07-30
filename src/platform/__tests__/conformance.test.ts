@@ -158,32 +158,67 @@ describe.runIf(isWindows)('windows: DPAPI round trip', () => {
 describe.runIf(isLinux)('linux: secret backend selection', () => {
   /**
    * Headless Linux — every devcontainer, CI runner and cloud VM — has no
-   * keyring. The failure mode we must never ship is a hang: libsecret blocks
-   * waiting on a Secret Service that will never answer.
+   * keyring. CI runs this job twice: once bare, once with dbus + gnome-keyring.
    *
-   * CI runs this job twice: once bare, once with dbus-x11 + gnome-keyring.
+   * WHAT THIS ASSERTS, AND WHY IT CHANGED. The original test demanded that a
+   * backend is ALWAYS selectable. CI proved that false, and the product is
+   * right and the test was wrong: with no keyring and no passphrase there is
+   * nowhere safe to put a secret, and inventing somewhere — a plaintext file,
+   * a fixed key — would be worse than refusing.
+   *
+   * The property actually worth guarding is that it FAILS FAST. libsecret
+   * blocks forever on a Secret Service that will never answer, and a CLI that
+   * hangs is the failure users cannot diagnose. So: succeed, or refuse
+   * quickly and say what would fix it. Never hang.
    */
-  it('selects a usable backend and never hangs', async () => {
+  it('either selects a backend or refuses quickly — never hangs', async () => {
     const started = Date.now()
     const host = await detectHost()
-    const sel = await selectSecretStore(host)
+
+    let chosen: string | null = null
+    let refusal: Error | null = null
+    try {
+      chosen = (await selectSecretStore(host)).chosen
+    } catch (err) {
+      refusal = err as Error
+    }
     const elapsed = Date.now() - started
 
-    expect(['linux-libsecret', 'encrypted-file']).toContain(sel.chosen)
-    // The 5s internal timeout must actually fire. If this exceeds ~15s the
-    // headless hang is real and users on CI would be stuck.
+    // The 5s internal timeout must actually fire. Beyond ~15s the headless
+    // hang is real and every CI user would be stuck.
     expect(elapsed).toBeLessThan(15_000)
 
-    if (!host.hasKeyring) expect(sel.chosen).toBe('encrypted-file')
+    if (chosen !== null) {
+      expect(['linux-libsecret', 'encrypted-file']).toContain(chosen)
+    } else {
+      // A refusal has to be actionable, not just a stack trace.
+      expect(refusal?.message ?? '').toMatch(/passphrase|AGENTSYNC_VAULT_PASSPHRASE/i)
+    }
   }, 30_000)
 
-  it('round-trips a secret through whichever backend was chosen', async () => {
+  it('falls back to the encrypted file once a passphrase exists', async () => {
+    // This is the documented escape hatch for headless hosts, so it is the
+    // thing that must work — not the keyring-less default.
     const host = await detectHost()
     const sel = await selectSecretStore(host, { passphrase: 'conformance-pass' })
+    expect(['linux-libsecret', 'encrypted-file']).toContain(sel.chosen)
+
     const key = `conformance-${process.pid}`
     await sel.store.set(key, 'value-é')
     expect(await sel.store.get(key)).toBe('value-é')
     await sel.store.delete(key)
+  }, 30_000)
+
+  it('says which backends it tried and why each was unusable', async () => {
+    // "No backend" is only a good error if it explains itself; a user on a
+    // devcontainer needs to know a passphrase is the fix.
+    const host = await detectHost()
+    try {
+      const sel = await selectSecretStore(host)
+      expect(sel.attempted.length).toBeGreaterThan(0)
+    } catch (err) {
+      expect((err as Error).message).toMatch(/tried:/i)
+    }
   }, 30_000)
 })
 

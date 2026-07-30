@@ -31,7 +31,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "cli": "node bin/agentsync.js",
-    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build",
+    "test:conformance": "vitest run --config vitest.conformance.config.ts"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

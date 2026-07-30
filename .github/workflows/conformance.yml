@@ -71,7 +71,7 @@ jobs:
 
       - run: npm ci
       - name: Conformance suite
-        run: npx vitest run src/platform/__tests__/conformance.test.ts --reporter=verbose
+        run: npm run test:conformance -- --reporter=verbose
 
       # Defender is the real source of transient file locks on developer
       # machines. Running with it active is the point, not an obstacle.
@@ -108,14 +108,14 @@ jobs:
 
       - name: Conformance suite (headless)
         if: matrix.keyring == 'absent'
-        run: npx vitest run src/platform/__tests__/conformance.test.ts --reporter=verbose
+        run: npm run test:conformance -- --reporter=verbose
 
       - name: Conformance suite (with keyring)
         if: matrix.keyring == 'present'
         run: |
           eval "$(dbus-launch --sh-syntax)"
           echo -n "" | gnome-keyring-daemon --unlock --replace --daemonize
-          npx vitest run src/platform/__tests__/conformance.test.ts --reporter=verbose
+          npm run test:conformance -- --reporter=verbose
 
   # -------------------------------------------------------------------------
   # WSL is a distinct target: Linux userland, Windows host, and a user who has
@@ -135,7 +135,7 @@ jobs:
           curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
           sudo apt-get install -y nodejs
           npm ci
-          npx vitest run src/platform/__tests__/conformance.test.ts --reporter=verbose
+          npm run test:conformance -- --reporter=verbose
 
   # -------------------------------------------------------------------------
   # Line endings. Git's autocrlf on Windows rewrites files, which changes
