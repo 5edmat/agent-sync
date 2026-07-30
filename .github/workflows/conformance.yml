@@ -1,0 +1,168 @@
+name: conformance
+
+# The all-platforms claim is only true if it is tested on all platforms.
+# This workflow is what turns `provenance: 'inferred'` path table entries into
+# verified ones — until a cell here is green, apply() refuses to write on that OS.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Logic suite — same tests, every OS. Catches path handling, line endings,
+  # and case-sensitivity divergence that macOS-only development hides.
+  # -------------------------------------------------------------------------
+  unit:
+    name: unit / ${{ matrix.os }} / node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npx vitest run --reporter=verbose
+
+  # -------------------------------------------------------------------------
+  # Windows syscalls we can only model from macOS. The junction test is
+  # data-loss class: if deleting a junction deletes its target, we would
+  # destroy a user's real skills directory.
+  # -------------------------------------------------------------------------
+  conformance-windows:
+    name: conformance / windows (${{ matrix.devmode }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Symlink creation is privileged on Windows. We must be correct BOTH
+        # when Developer Mode is on (symlinks work) and off (junction fallback).
+        devmode: [off, on]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Enable Developer Mode
+        if: matrix.devmode == 'on'
+        shell: pwsh
+        run: |
+          New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" -Force | Out-Null
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" `
+            -Name AllowDevelopmentWithoutDevLicense -Value 1
+
+      - name: Enable long paths
+        shell: pwsh
+        run: |
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
+            -Name LongPathsEnabled -Value 1
+          git config --system core.longpaths true
+
+      - run: npm ci
+      - name: Conformance suite
+        run: npx vitest run src/platform/__tests__/conformance.test.ts --reporter=verbose
+
+      # Defender is the real source of transient file locks on developer
+      # machines. Running with it active is the point, not an obstacle.
+      - name: Confirm Defender real-time protection is active
+        shell: pwsh
+        run: Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled
+
+  # -------------------------------------------------------------------------
+  # Linux runs TWICE: bare (headless, no Secret Service) and with a live
+  # keyring. Headless is every devcontainer and CI runner — the failure mode
+  # we must never ship is libsecret hanging forever on a bus nobody answers.
+  # -------------------------------------------------------------------------
+  conformance-linux:
+    name: conformance / linux (keyring=${{ matrix.keyring }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        keyring: [absent, present]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Install and unlock a Secret Service
+        if: matrix.keyring == 'present'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gnome-keyring libsecret-tools dbus-x11
+          echo "KEYRING=present" >> "$GITHUB_ENV"
+
+      - name: Conformance suite (headless)
+        if: matrix.keyring == 'absent'
+        run: npx vitest run src/platform/__tests__/conformance.test.ts --reporter=verbose
+
+      - name: Conformance suite (with keyring)
+        if: matrix.keyring == 'present'
+        run: |
+          eval "$(dbus-launch --sh-syntax)"
+          echo -n "" | gnome-keyring-daemon --unlock --replace --daemonize
+          npx vitest run src/platform/__tests__/conformance.test.ts --reporter=verbose
+
+  # -------------------------------------------------------------------------
+  # WSL is a distinct target: Linux userland, Windows host, and a user who has
+  # Claude Code installed on BOTH sides. It is not covered by either job above.
+  # -------------------------------------------------------------------------
+  conformance-wsl:
+    name: conformance / wsl
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Vampire/setup-wsl@v3
+        with:
+          distribution: Ubuntu-24.04
+      - name: Run suite inside WSL
+        shell: wsl-bash {0}
+        run: |
+          curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+          sudo apt-get install -y nodejs
+          npm ci
+          npx vitest run src/platform/__tests__/conformance.test.ts --reporter=verbose
+
+  # -------------------------------------------------------------------------
+  # Line endings. Git's autocrlf on Windows rewrites files, which changes
+  # content hashes and produces phantom drift in the device matrix.
+  # -------------------------------------------------------------------------
+  canonical-bytes:
+    name: canonical bytes / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Deliberately hostile: let git mangle line endings if it wants to.
+          # canonicalJson must still produce identical bytes on every OS.
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Force CRLF checkout (worst case)
+        if: runner.os == 'Windows'
+        run: |
+          git config core.autocrlf true
+          git rm --cached -r . -q
+          git reset --hard
+      - run: npm ci
+      - run: npx vitest run src/platform/__tests__/canonical.test.ts --reporter=verbose

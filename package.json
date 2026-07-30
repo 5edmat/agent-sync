@@ -1,0 +1,59 @@
+{
+  "name": "@5edmat/agent-sync",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Read, diff and safely apply AI coding tool configuration \u2014 Claude Code, Cursor and Zed \u2014 with atomic writes, comment-preserving edits and rollback.",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "bin": {
+    "agentsync": "bin/agentsync.js"
+  },
+  "files": [
+    "bin",
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./dist/core/types.js",
+    "./platform": "./dist/platform/index.js",
+    "./core/types": "./dist/core/types.js",
+    "./adapters": "./dist/adapters/claude-code.js",
+    "./cli": "./dist/cli/run.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:platform": "tsc -p tsconfig.platform.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "cli": "node bin/agentsync.js",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@vitest/coverage-v8": "^2.1.9",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.9"
+  },
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "cursor",
+    "zed",
+    "agent-skills",
+    "mcp",
+    "dotfiles",
+    "config",
+    "sync",
+    "cli",
+    "devtools"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "types": "./dist/core/types.d.ts"
+}

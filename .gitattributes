@@ -1,0 +1,21 @@
+# Byte-for-byte stable content across macOS / Linux / WSL / Windows checkouts.
+#
+# Content hashes in this product are computed over canonical bytes (LF, no BOM).
+# If git is allowed to translate line endings on checkout (core.autocrlf=true on
+# Windows), every hash comparison against a checked-out fixture breaks. Pin it.
+* text=auto eol=lf
+
+# Fixtures that intentionally carry CRLF / BOM must never be translated.
+*.crlf.txt   -text
+*.bom.json   -text
+*.bin        -text
+
+# Never translate binaries.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz  binary
+*.node binary

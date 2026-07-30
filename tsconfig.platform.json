@@ -1,0 +1,7 @@
+{
+  // Scoped typecheck for the platform layer + the core types it imports.
+  // The full-project `tsconfig.json` also covers modules owned by other
+  // workstreams; this lets the platform layer be verified independently.
+  "extends": "./tsconfig.json",
+  "include": ["src/platform/**/*.ts", "src/core/types.ts"]
+}

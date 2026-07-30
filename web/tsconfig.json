@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true,
+    "exactOptionalPropertyTypes": false,
+
+    /* The shared domain model lives outside web/ and is owned by another
+       workstream. We consume it read-only via this alias. */
+    "baseUrl": ".",
+    "paths": {
+      "@core/*": ["../src/core/*"],
+      "@adapters/*": ["../src/adapters/*"],
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src", "../src/core", "vite.config.ts"]
+}

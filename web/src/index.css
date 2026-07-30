@@ -1,0 +1,201 @@
+@import 'tailwindcss';
+
+/* ---------------------------------------------------------------------------
+   THE BENCH
+
+   One dark surface with one warm paper object sitting on it: the machine
+   everything comes from. Every other machine is a quiet row beside it. There is
+   no second screen, no drawer, no wall — two panels and one decision.
+
+   The palette carries meaning, and two of the four colours are RESERVED:
+
+     flight   saturated amber   things IN FLIGHT and nothing else — selected to
+                                travel, or counted in the button. If it is used
+                                for ordinary emphasis it stops meaning "this is
+                                going somewhere", which is the only thing the eye
+                                must be able to find instantly.
+     exec     muted brick       anything that RUNS CODE on a machine. Never an
+                                error colour, never a warning colour.
+     settled  green             it is here and it matches.
+     paper    warm off-white    the source machine. It is light; the bench is dark.
+
+   Everything else — refusals, org policy, unverified paths, missing tools — is
+   explained in words on a quiet surface. There are six reasons a write is
+   refused and they do not fit on a colour wheel, so they are not on one.
+
+   Colour is never the only signal. Every state also has a word, and the ones
+   that matter also have a shape.
+--------------------------------------------------------------------------- */
+
+@theme {
+  /* The surface -------------------------------------------------------- */
+  --color-felt: #191c1f;
+  --color-felt-deep: #15181a;
+  --color-felt-raise: #22262a;
+  --color-edge: #2c3136;
+  --color-edge-lit: #3a4045;
+
+  /* Type on the surface ------------------------------------------------ */
+  --color-onfelt: #e6e3de;
+  --color-dim: #8e9298;
+  --color-dimmer: #6b6f74;
+
+  /* The object --------------------------------------------------------- */
+  --color-paper: #f4f1ec;
+  --color-paper-face: #ffffff;
+  --color-paper-sub: #efebe4;
+  --color-paper-edge: #e4e0d9;
+  --color-ink: #1b1e21;
+  --color-ink-2: #61666b;
+  --color-ink-3: #8a8f94;
+
+  /* Reserved ----------------------------------------------------------- */
+  --color-flight: #d8922c;
+  --color-flight-ink: #201503;
+  --color-flight-soft: rgb(216 146 44 / 0.16);
+  --color-exec: #b4523f;
+  --color-exec-on-paper: #98402f;
+  --color-settled: #4e9e7a;
+  --color-settled-on-paper: #2f6f52;
+
+  --font-sans: ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* The object sits ON something. The shadow is the whole illusion. */
+  --shadow-machine: 0 14px 32px rgb(0 0 0 / 0.36);
+  --shadow-sheet: 0 32px 80px rgb(0 0 0 / 0.62);
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    border-color: var(--color-edge);
+  }
+
+  html {
+    /* Nothing may scroll the body sideways. Wide content scrolls inside its
+       own container; the page never does. */
+    overflow-x: hidden;
+    background: var(--color-felt);
+  }
+
+  body {
+    margin: 0;
+    color: var(--color-onfelt);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    /* A light source above the bench. Subtle, but it is what stops the page
+       reading as a flat dark theme and starts it reading as a surface. */
+    background:
+      radial-gradient(140% 70% at 50% -18%, #23272b 0%, rgb(35 39 43 / 0) 62%),
+      var(--color-felt);
+    background-attachment: fixed;
+  }
+
+  /* This app is meant to be fully usable without a mouse, so focus is loud
+     everywhere and never removed. */
+  :focus-visible {
+    outline: 2px solid var(--color-flight);
+    outline-offset: 2px;
+    border-radius: 5px;
+  }
+
+  ::selection {
+    background: var(--color-flight);
+    color: var(--color-flight-ink);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-edge);
+    border-radius: 7px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-edge-lit);
+    background-clip: content-box;
+    border: 3px solid transparent;
+  }
+}
+
+@layer utilities {
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .balance {
+    text-wrap: balance;
+  }
+
+  /* Visible to a screen reader, invisible on screen. Used for the live region
+     and for the words that back up every colour. */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  /* A slot that is empty on purpose. Shape, not colour, so it reads for
+     anyone — including in a screenshot printed in black and white. */
+  .bay {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      transparent,
+      transparent 5px,
+      rgb(255 255 255 / 0.03) 5px,
+      rgb(255 255 255 / 0.03) 6px
+    );
+  }
+
+  .twist {
+    transition: transform 0.14s ease-out;
+  }
+  .twist-open {
+    transform: rotate(90deg);
+  }
+}
+
+@keyframes bench-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.anim-in {
+  animation: bench-in 0.18s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-in {
+    animation: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
