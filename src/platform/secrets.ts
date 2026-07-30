@@ -315,6 +315,22 @@ export function decodeSecretFileName(name: string): string | null {
  * non-ASCII secret came back mangled. Base64 is ASCII in every code page, so the
  * round trip is byte-exact regardless of the runner's locale.
  */
+/**
+ * Load the module that provides ConvertTo/ConvertFrom-SecureString.
+ *
+ * PowerShell normally autoloads it on first use, so this looks redundant — and
+ * on a GitHub Windows runner it is not: the call fails with
+ * `CouldNotAutoloadMatchingModule`, "the command was found in the module
+ * Microsoft.PowerShell.Security, but the module could not be loaded". Autoload
+ * depends on PSModulePath and the execution policy, neither of which we
+ * control on someone else's machine, and a stripped or locked-down image is
+ * exactly where a secrets backend must not quietly stop working.
+ *
+ * `-ErrorAction Stop` so a genuine load failure surfaces as our error rather
+ * than as a confusing "command not found" further down the script.
+ */
+const PS_PRELUDE = 'Import-Module Microsoft.PowerShell.Security -ErrorAction Stop;'
+
 export class WindowsDpapiStore implements SecretStore {
   readonly backend = 'windows-dpapi' as const
   readonly description = 'Windows DPAPI (CurrentUser scope) blobs under %LOCALAPPDATA%'
@@ -364,6 +380,7 @@ export class WindowsDpapiStore implements SecretStore {
     // is the documented way to read a SecureString without leaving copies.
     // The plaintext leaves as base64 so the console code page cannot touch it.
     const script = [
+      PS_PRELUDE,
       '$e = [Console]::In.ReadToEnd().Trim();',
       '$ss = ConvertTo-SecureString -String $e;',
       '$b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($ss);',
@@ -382,6 +399,7 @@ export class WindowsDpapiStore implements SecretStore {
     // The value arrives base64-encoded for the same reason it leaves that way
     // in get(): stdin is decoded with the OEM code page, not UTF-8.
     const script = [
+      PS_PRELUDE,
       '$e = [Console]::In.ReadToEnd().Trim();',
       '$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($e));',
       '$ss = ConvertTo-SecureString -String $p -AsPlainText -Force;',
