@@ -333,7 +333,8 @@ export function decodeSecretFileName(name: string): string | null {
  * not a precondition. If the cmdlet genuinely is not there, the call below
  * fails on its own and we surface that instead.
  */
-const PS_PRELUDE = 'Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue;'
+const PS_PRELUDE =
+  'Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue 2>$null;'
 
 export class WindowsDpapiStore implements SecretStore {
   readonly backend = 'windows-dpapi' as const
@@ -395,8 +396,12 @@ export class WindowsDpapiStore implements SecretStore {
       'finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) }',
     ].join(' ')
     const r = await this.ps(script, blob)
-    if (r.code !== 0) throw new SecretsError(`DPAPI unprotect failed: ${r.stderr.trim()}`, this.backend)
-    return Buffer.from(r.stdout.trim(), 'base64').toString('utf8')
+    const out = r.stdout.trim()
+    if (out.length === 0) {
+      const why = r.stderr.trim() || `exit ${r.code}`
+      throw new SecretsError(`DPAPI unprotect failed: ${why}`, this.backend)
+    }
+    return Buffer.from(out, 'base64').toString('utf8')
   }
 
   async set(key: string, value: string): Promise<void> {
@@ -410,9 +415,22 @@ export class WindowsDpapiStore implements SecretStore {
       '[Console]::Out.Write((ConvertFrom-SecureString -SecureString $ss))',
     ].join(' ')
     const r = await this.ps(script, Buffer.from(value, 'utf8').toString('base64'))
-    if (r.code !== 0) throw new SecretsError(`DPAPI protect failed: ${r.stderr.trim()}`, this.backend)
     const blob = r.stdout.trim()
-    if (blob.length === 0) throw new SecretsError('DPAPI protect returned an empty blob', this.backend)
+    // Judge on the RESULT, not the exit code. PowerShell writes non-fatal noise
+    // to stderr and taints its exit status for things that did not stop it
+    // working — the runner's copy of Microsoft.PowerShell.Security emits a type
+    // data error on load, and two attempts to suppress it (-ErrorAction Stop,
+    // then SilentlyContinue) both still failed here. A protected blob on stdout
+    // is proof the cmdlet ran; anything else is commentary.
+    if (blob.length === 0) {
+      // Two different diagnoses, kept apart: the cmdlet failed, versus it ran
+      // cleanly and produced nothing. The second is the stranger bug.
+      const why = r.stderr.trim() || (r.code !== 0 ? `exit ${r.code}` : '')
+      throw new SecretsError(
+        why ? `DPAPI protect failed: ${why}` : 'DPAPI protect returned an empty blob',
+        this.backend,
+      )
+    }
     await this.fs.mkdir(this.dir, { recursive: true })
     await this.fs.writeFile(path.join(this.dir, encodeSecretFileName(key)), blob, { mode: 0o600 })
   }
