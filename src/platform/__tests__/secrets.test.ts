@@ -155,7 +155,16 @@ describe('EncryptedFileStore', () => {
     expect(raw).not.toContain('token') // key names are inside the ciphertext too
   })
 
-  it('writes the vault 0600', async () => {
+  // POSIX only, and the assertion stays at full strength there: a secrets vault
+  // readable by every account on a shared machine is a real leak, so 0600 is not
+  // negotiable on macOS or Linux. Windows has no POSIX mode bits at all — libuv
+  // synthesizes 0666/0444 from the read-only attribute and `atomic.ts` never
+  // chmods there on purpose — so demanding 0600 would be demanding a guarantee
+  // the platform cannot give. What protects the vault on Windows is the ACL the
+  // file inherits from %LOCALAPPDATA%, which Node offers no API to inspect;
+  // "never writes the plaintext to disk" above is the confidentiality property
+  // that does hold identically on every OS.
+  it.skipIf(process.platform === 'win32')('writes the vault 0600', async () => {
     const file = path.join(dir, 'v.json')
     await make({ file }).set('k', 'v')
     expect((await fsp.stat(file)).mode & 0o777).toBe(0o600)
@@ -405,15 +414,26 @@ describe('parseSecretToolSearch', () => {
 // ---------------------------------------------------------------------------
 
 describe('WindowsDpapiStore', () => {
-  /** Stands in for CryptProtectData: SecureString round-trip through a hex blob. */
+  /**
+   * Stands in for CryptProtectData: SecureString round-trip through a hex blob.
+   *
+   * It models the *wire* contract as well as the crypto one. The plaintext
+   * crosses the process boundary base64-encoded in both directions, because
+   * PowerShell's `[Console]::In`/`[Console]::Out` use the OEM console code page
+   * rather than UTF-8 and would otherwise corrupt any non-ASCII secret.
+   */
   const fakePowershell: ExecFn = async (_file, args, options) => {
     const script = args[args.length - 1] ?? ''
     const input = options?.input ?? ''
     if (script.includes('ConvertFrom-SecureString')) {
-      return { code: 0, stdout: `${Buffer.from(input, 'utf16le').toString('hex')}\n`, stderr: '' }
+      // Protect: base64(UTF-8 plaintext) in, an opaque hex blob out.
+      const plain = Buffer.from(input.trim(), 'base64').toString('utf8')
+      return { code: 0, stdout: `${Buffer.from(plain, 'utf16le').toString('hex')}\n`, stderr: '' }
     }
     if (script.includes('SecureStringToBSTR')) {
-      return { code: 0, stdout: Buffer.from(input.trim(), 'hex').toString('utf16le'), stderr: '' }
+      // Unprotect: the hex blob in, base64(UTF-8 plaintext) out.
+      const plain = Buffer.from(input.trim(), 'hex').toString('utf16le')
+      return { code: 0, stdout: Buffer.from(plain, 'utf8').toString('base64'), stderr: '' }
     }
     if (script.includes('ok')) return { code: 0, stdout: 'ok', stderr: '' }
     return { code: 1, stdout: '', stderr: 'unexpected script' }
@@ -432,6 +452,20 @@ describe('WindowsDpapiStore', () => {
     expect(await store.get('token')).toBe('sk-ant-xyz')
   })
 
+  it('round-trips a NON-ASCII secret byte for byte', async () => {
+    // The conformance suite proves this against real DPAPI on a real runner;
+    // this proves the transport encoding from here. PowerShell decodes stdin
+    // with the console's OEM code page (437 on a US machine), so handing it raw
+    // UTF-8 mangled every accented or CJK character on the way in and again on
+    // the way out. Both directions are base64 now, which is ASCII in every code
+    // page — and this test fails the moment someone "simplifies" that away.
+    const store = make()
+    for (const value of ['hunter2-é中', 'ünïcødé 🔑', 'ascii-only']) {
+      await store.set('token', value)
+      expect(await store.get('token')).toBe(value)
+    }
+  })
+
   it('never puts the secret in the command line', async () => {
     // On Windows any process in the session can read another process's argv.
     const calls: RecordedCall[] = []
@@ -440,8 +474,12 @@ describe('WindowsDpapiStore', () => {
       return fakePowershell(file, args, options)
     }
     await make({ exec }).set('token', 'sk-SECRET-VALUE')
-    expect(calls.every((c) => !c.args.join(' ').includes('sk-SECRET-VALUE'))).toBe(true)
-    expect(calls[0]?.input).toBe('sk-SECRET-VALUE')
+    const encoded = Buffer.from('sk-SECRET-VALUE', 'utf8').toString('base64')
+    const argv = calls.map((c) => c.args.join(' '))
+    expect(argv.every((a) => !a.includes('sk-SECRET-VALUE') && !a.includes(encoded))).toBe(true)
+    // stdin is where it went, base64-encoded so the console code page cannot
+    // corrupt it. Encoding is not obfuscation: this is transport, not secrecy.
+    expect(calls[0]?.input).toBe(encoded)
   })
 
   it('invokes powershell non-interactively with no profile', async () => {

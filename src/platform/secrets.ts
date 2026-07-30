@@ -304,6 +304,16 @@ export function decodeSecretFileName(name: string): string | null {
  *
  * The secret is passed on stdin, never argv — on Windows the full command line
  * of any process is readable by any process in the same session.
+ *
+ * Everything crossing the process boundary is base64, in both directions, and
+ * that is not decoration. `[Console]::In` / `[Console]::Out` in Windows
+ * PowerShell use `Console.InputEncoding` / `Console.OutputEncoding`, which
+ * default to the console's OEM code page (437 on a US runner) — not UTF-8, and
+ * not configurable from here without touching console handles that do not exist
+ * when stdio is redirected. Writing the raw secret meant Node's UTF-8 bytes were
+ * decoded as CP437 on the way in and re-encoded as CP437 on the way out, so any
+ * non-ASCII secret came back mangled. Base64 is ASCII in every code page, so the
+ * round trip is byte-exact regardless of the runner's locale.
  */
 export class WindowsDpapiStore implements SecretStore {
   readonly backend = 'windows-dpapi' as const
@@ -352,25 +362,32 @@ export class WindowsDpapiStore implements SecretStore {
     }
     // Round-trip the protected string back to plaintext. Marshal/ZeroFreeBSTR
     // is the documented way to read a SecureString without leaving copies.
+    // The plaintext leaves as base64 so the console code page cannot touch it.
     const script = [
       '$e = [Console]::In.ReadToEnd().Trim();',
       '$ss = ConvertTo-SecureString -String $e;',
       '$b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($ss);',
-      'try { [Console]::Out.Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($b)) }',
+      'try {',
+      '$plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($b);',
+      '[Console]::Out.Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($plain)))',
+      '}',
       'finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) }',
     ].join(' ')
     const r = await this.ps(script, blob)
     if (r.code !== 0) throw new SecretsError(`DPAPI unprotect failed: ${r.stderr.trim()}`, this.backend)
-    return r.stdout
+    return Buffer.from(r.stdout.trim(), 'base64').toString('utf8')
   }
 
   async set(key: string, value: string): Promise<void> {
+    // The value arrives base64-encoded for the same reason it leaves that way
+    // in get(): stdin is decoded with the OEM code page, not UTF-8.
     const script = [
-      '$p = [Console]::In.ReadToEnd();',
+      '$e = [Console]::In.ReadToEnd().Trim();',
+      '$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($e));',
       '$ss = ConvertTo-SecureString -String $p -AsPlainText -Force;',
       '[Console]::Out.Write((ConvertFrom-SecureString -SecureString $ss))',
     ].join(' ')
-    const r = await this.ps(script, value)
+    const r = await this.ps(script, Buffer.from(value, 'utf8').toString('base64'))
     if (r.code !== 0) throw new SecretsError(`DPAPI protect failed: ${r.stderr.trim()}`, this.backend)
     const blob = r.stdout.trim()
     if (blob.length === 0) throw new SecretsError('DPAPI protect returned an empty blob', this.backend)

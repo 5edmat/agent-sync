@@ -140,9 +140,20 @@ describe.runIf(isWindows)('windows: DPAPI round trip', () => {
    */
   it('stores and retrieves a secret through the real backend', async () => {
     const host = await detectHost()
-    const sel = await selectSecretStore(host)
+    // `dpapiDir` is not optional and has no default: the store needs somewhere
+    // to put its blobs, `selectSecretStore` returns null for a backend it cannot
+    // construct, and DPAPI is therefore skipped as "not configured for this
+    // host". That is deliberate product behaviour with its own unit test — the
+    // real caller (cli/commands/doctor.ts) passes `<stateDir>/secrets` — so a
+    // conformance test that omits it was asking for a backend it never
+    // configured and got NoSecretBackendError before reaching any assertion.
+    const sel = await selectSecretStore(host, { dpapiDir: join(work, 'secrets') })
     expect(sel.chosen).toBe('windows-dpapi')
 
+    // Non-ASCII on purpose. PowerShell's [Console]::In/[Console]::Out use the
+    // console's OEM code page, not UTF-8, so a raw-text transport corrupts
+    // exactly these characters — and only a real powershell.exe can prove the
+    // base64 transport in WindowsDpapiStore actually fixes it.
     const key = `conformance-${process.pid}`
     await sel.store.set(key, 'hunter2-é中')
     expect(await sel.store.get(key)).toBe('hunter2-é中')
@@ -196,17 +207,38 @@ describe.runIf(isLinux)('linux: secret backend selection', () => {
     }
   }, 30_000)
 
-  it('falls back to the encrypted file once a passphrase exists', async () => {
+  it('falls back to the encrypted file once a passphrase AND a vault path exist', async () => {
     // This is the documented escape hatch for headless hosts, so it is the
     // thing that must work — not the keyring-less default.
+    //
+    // A passphrase alone is not enough and never was: `EncryptedFileStore`
+    // needs somewhere to put the vault, `selectSecretStore` returns null for a
+    // backend it cannot construct, and the whole ladder then ends in
+    // NoSecretBackendError. The product is right — inventing a vault location
+    // for a secrets file is exactly the kind of guess it must not make — and
+    // the test's setup was incomplete. The real caller
+    // (cli/commands/doctor.ts) passes `<stateDir>/secrets.vault.json`.
+    //
+    // `force` because the assertion is about the fallback backend itself. Left
+    // to natural selection this test asserted "libsecret OR encrypted-file",
+    // which on the keyring=present leg exercised the keyring and never touched
+    // the escape hatch at all — so the thing named in the title went untested
+    // on half the matrix. Backend *selection* is what the neighbouring test
+    // covers; this one proves the file vault really works on a real Linux fs.
     const host = await detectHost()
-    const sel = await selectSecretStore(host, { passphrase: 'conformance-pass' })
-    expect(['linux-libsecret', 'encrypted-file']).toContain(sel.chosen)
+    const sel = await selectSecretStore(host, {
+      force: 'encrypted-file',
+      passphrase: 'conformance-pass',
+      vaultFile: join(work, 'secrets.vault.json'),
+    })
+    expect(sel.chosen).toBe('encrypted-file')
 
     const key = `conformance-${process.pid}`
     await sel.store.set(key, 'value-é')
     expect(await sel.store.get(key)).toBe('value-é')
+    expect(await sel.store.list()).toContain(key)
     await sel.store.delete(key)
+    expect(await sel.store.get(key)).toBeNull()
   }, 30_000)
 
   it('says which backends it tried and why each was unusable', async () => {

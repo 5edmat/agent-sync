@@ -12,7 +12,7 @@
 
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 import type { ConfigDoc, HostEnv, StoreDescriptor, ToolAdapter } from '../../core/types.js'
 
@@ -61,6 +61,24 @@ export async function writeFixture(path: string, contents: string): Promise<void
 }
 
 export const readText = (path: string): Promise<string> => readFile(path, 'utf8')
+
+/**
+ * Compare paths as filesystem identities rather than as strings.
+ *
+ * These tests deliberately pin `HostEnv.os` to macOS so the expected path table
+ * is one a reader can hold in their head, then point it at a real temp
+ * directory. On Windows that means the table is `/`-joined onto a `C:\...` home
+ * — `C:\Users\…\Temp\x/.cursor/mcp.json`. Windows opens that file perfectly
+ * happily, which is why every behavioural assertion in these files passes there;
+ * what it is *not* is string-equal to the all-backslash form `path.resolve`
+ * returns, and `withBackup()` resolves before recording a rollback token's path.
+ *
+ * So the mismatch is between a macOS-shaped fixture and a Windows filesystem,
+ * not a defect in either the token or the table. Normalizing both sides keeps
+ * the assertion exactly as strong — "the rollback token names this file" — and
+ * drops only the separator spelling, which is not what the test is about.
+ */
+export const samePath = (p: string): string => resolve(p)
 
 export async function exists(path: string): Promise<boolean> {
   try {

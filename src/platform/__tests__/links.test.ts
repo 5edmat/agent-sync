@@ -32,6 +32,21 @@ afterEach(async () => {
   await fsp.rm(dir, { recursive: true, force: true })
 })
 
+/**
+ * An absolute fixture path in the *running host's* flavour.
+ *
+ * `resolveLinkTarget` and `relativeLinkTarget` are `node:path` functions by
+ * design: they interpret targets read out of the local filesystem, so they must
+ * speak the local OS's rules. Feeding them `/Users/x/...` on Windows is not a
+ * Windows path — `path.resolve` stamps the process's current drive onto it and
+ * returns `C:\Users\x\...`, so the expectation, not the function, is what is
+ * wrong. These fixtures keep the *shape* every assertion is about (a link four
+ * levels down pointing two levels up) while letting each OS spell it its own
+ * way. Evaluated at module load, i.e. before any test chdirs, so the drive is
+ * fixed once and the comparisons stay stable.
+ */
+const abs = (...segments: string[]): string => path.resolve(path.sep, ...segments)
+
 function errno(code: string): NodeJS.ErrnoException {
   const err = new Error(code) as NodeJS.ErrnoException
   err.code = code
@@ -58,6 +73,21 @@ function windowsOps(opts: { junctionsWork: boolean }): {
   }
   return { ops, junctionCalls }
 }
+
+/**
+ * `LinkInfo.raw` is deliberately the OS's own answer — exactly what `readlink`
+ * handed back, un-rewritten, because that is the string a user sees in `ls -l`
+ * and the one we must not silently launder. Windows stores relative symlink
+ * targets with backslashes, so `raw` is `..\..\.agents\skills\foo` there even
+ * when the link was created from a `/`-separated string.
+ *
+ * What these assertions are about is *which* target was recorded, not how the
+ * volume spells a separator, so compare in one flavour. The guarantee that we
+ * ourselves always WRITE portable `/` targets is a different claim and is
+ * asserted at full strength where we control the value — see `materialize`'s
+ * `linkTarget` expectations below, which stay exact on every OS.
+ */
+const asPosix = (raw: string | null): string | null => (raw === null ? null : raw.split(/[\\/]/).join('/'))
 
 const mkTree = async (root: string): Promise<void> => {
   await fsp.mkdir(path.join(root, 'sub'), { recursive: true })
@@ -87,30 +117,41 @@ describe('resolveLinkTarget', () => {
   it('resolves a relative target against the link directory, not the cwd', () => {
     // The real Claude Code layout. Resolving against process.cwd() — which is
     // wherever the user ran the CLI — silently produces a bogus path.
-    const link = '/Users/x/.claude/skills/foo'
-    expect(resolveLinkTarget(link, '../../.agents/skills/foo')).toBe('/Users/x/.agents/skills/foo')
+    const link = abs('Users', 'x', '.claude', 'skills', 'foo')
+    expect(resolveLinkTarget(link, '../../.agents/skills/foo')).toBe(
+      abs('Users', 'x', '.agents', 'skills', 'foo'),
+    )
   })
 
   it('handles a sibling relative target', () => {
-    expect(resolveLinkTarget('/a/b/link', 'target')).toBe('/a/b/target')
-    expect(resolveLinkTarget('/a/b/link', './target')).toBe('/a/b/target')
+    expect(resolveLinkTarget(abs('a', 'b', 'link'), 'target')).toBe(abs('a', 'b', 'target'))
+    expect(resolveLinkTarget(abs('a', 'b', 'link'), './target')).toBe(abs('a', 'b', 'target'))
   })
 
-  it('passes absolute POSIX targets through, normalized', () => {
-    expect(resolveLinkTarget('/a/b/link', '/x/y/../z')).toBe('/x/z')
+  it('passes absolute targets through, normalized', () => {
+    // Built by hand rather than with path.join so the `..` survives into the
+    // argument — normalizing it away here would test nothing.
+    const unnormalized = `${path.sep}x${path.sep}y${path.sep}..${path.sep}z`
+    expect(resolveLinkTarget(abs('a', 'b', 'link'), unnormalized)).toBe(path.join(path.sep, 'x', 'z'))
   })
 
   it('handles a Windows extended-length target', () => {
-    expect(resolveLinkTarget('/a/link', '\\\\?\\C:\\Users\\a\\skills')).toBe('C:\\Users\\a\\skills')
+    // Absolute in win32 terms on every OS, so this one case is spelled the same
+    // way everywhere: it is specifically about the \\?\ prefix.
+    expect(resolveLinkTarget(abs('a', 'link'), '\\\\?\\C:\\Users\\a\\skills')).toBe('C:\\Users\\a\\skills')
   })
 
   it('does not depend on the process cwd', () => {
-    const before = resolveLinkTarget('/a/b/link', '../c')
+    const link = abs('a', 'b', 'link')
+    const expected = abs('a', 'c')
+    const before = resolveLinkTarget(link, '../c')
     const prev = process.cwd()
     try {
+      // On Windows this can also change the current DRIVE, which is exactly the
+      // kind of hidden dependency the assertion is guarding against.
       process.chdir(os.tmpdir())
-      expect(resolveLinkTarget('/a/b/link', '../c')).toBe(before)
-      expect(before).toBe('/a/c')
+      expect(resolveLinkTarget(link, '../c')).toBe(before)
+      expect(before).toBe(expected)
     } finally {
       process.chdir(prev)
     }
@@ -119,19 +160,19 @@ describe('resolveLinkTarget', () => {
 
 describe('relativeLinkTarget', () => {
   it('produces the ../../ form Claude Code uses', () => {
-    expect(relativeLinkTarget('/Users/x/.claude/skills/foo', '/Users/x/.agents/skills/foo')).toBe(
-      '../../.agents/skills/foo',
-    )
+    expect(
+      relativeLinkTarget(abs('Users', 'x', '.claude', 'skills', 'foo'), abs('Users', 'x', '.agents', 'skills', 'foo')),
+    ).toBe('../../.agents/skills/foo')
   })
 
   it('always uses forward slashes so the value is portable', () => {
-    expect(relativeLinkTarget('/a/b/c/link', '/a/b/target')).toBe('../target')
-    expect(relativeLinkTarget('/a/b/c/link', '/a/b/target')).not.toContain('\\')
+    expect(relativeLinkTarget(abs('a', 'b', 'c', 'link'), abs('a', 'b', 'target'))).toBe('../target')
+    expect(relativeLinkTarget(abs('a', 'b', 'c', 'link'), abs('a', 'b', 'target'))).not.toContain('\\')
   })
 
   it('round-trips with resolveLinkTarget', () => {
-    const link = '/Users/x/.claude/skills/foo'
-    const target = '/Users/x/.agents/skills/foo'
+    const link = abs('Users', 'x', '.claude', 'skills', 'foo')
+    const target = abs('Users', 'x', '.agents', 'skills', 'foo')
     expect(resolveLinkTarget(link, relativeLinkTarget(link, target))).toBe(target)
   })
 })
@@ -175,7 +216,7 @@ describe('readLinkTarget', () => {
     const info = await readLinkTarget(link)
     expect(info.isLink).toBe(true)
     expect(info.kind).toBe('symlink')
-    expect(info.raw).toBe('../../.agents/skills/foo')
+    expect(asPosix(info.raw)).toBe('../../.agents/skills/foo')
     expect(info.isRelative).toBe(true)
     expect(info.resolved).toBe(agents)
     expect(info.targetExists).toBe(true)
@@ -206,7 +247,7 @@ describe('readLinkTarget', () => {
     const info = await readLinkTarget(link)
     expect(info.isLink).toBe(true)
     expect(info.targetExists).toBe(false)
-    expect(info.raw).toBe('../nowhere/at/all')
+    expect(asPosix(info.raw)).toBe('../nowhere/at/all')
   })
 
   it('reports a regular file as not a link', async () => {

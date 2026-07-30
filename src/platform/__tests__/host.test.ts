@@ -35,6 +35,21 @@ afterEach(async () => {
   await fsp.rm(dir, { recursive: true, force: true })
 })
 
+/**
+ * Fixture paths in the *running host's* flavour.
+ *
+ * `probeSymlinkSupport` and `readOrCreateDeviceId` build their paths with
+ * `node:path` — correctly, because both act on the filesystem of the machine
+ * actually executing, not on a described remote host. So on Windows they look
+ * for `\state\device.json`. A fixture that hardcodes `/state/device.json` is
+ * simply a different key: the lookup misses in the fake fs, the code decides no
+ * device id has been persisted yet, and it mints a fresh UUID. That is the test
+ * encoding a macOS assumption, not the product misbehaving — so build fixtures
+ * the same way the product does.
+ */
+const STATE_DIR = path.join(path.sep, 'state')
+const DEVICE_FILE = path.join(STATE_DIR, 'device.json')
+
 // Real /proc/version strings.
 const PROC_WSL1 =
   'Linux version 4.4.0-19041-Microsoft (Microsoft@Microsoft.com) (gcc version 5.4.0) #1237-Microsoft Sat Sep 11 14:32:00 PST 2021'
@@ -421,10 +436,11 @@ describe('probeSymlinkSupport', () => {
     // tmpdir is frequently a different filesystem (tmpfs, or C:\ when home is
     // a redirected network drive), and symlink support is a property of the
     // volume we will actually write to.
+    const stateDirPath = path.join(path.sep, 'some', 'state', 'dir')
     const io = makeFakeIO({})
-    await probeSymlinkSupport(io, '/some/state/dir')
-    expect(io.mkdirCalls[0]).toMatch(/^\/some\/state\/dir\/\.symlink-probe-/)
-    expect(io.mkdirCalls.some((p) => p.startsWith('/tmp'))).toBe(false)
+    await probeSymlinkSupport(io, stateDirPath)
+    expect(io.mkdirCalls[0]?.startsWith(path.join(stateDirPath, '.symlink-probe-'))).toBe(true)
+    expect(io.mkdirCalls.some((p) => p.startsWith(io.tmpdir()))).toBe(false)
   })
 })
 
@@ -526,15 +542,15 @@ describe('probeKeyring', () => {
 describe('readOrCreateDeviceId', () => {
   it('creates a UUID and persists it', async () => {
     const io = makeFakeIO({ uuids: ['3f2504e0-4f89-41d3-9a0c-0305e82c3301'] })
-    const id = await readOrCreateDeviceId(io, '/state')
+    const id = await readOrCreateDeviceId(io, STATE_DIR)
     expect(id).toBe('3f2504e0-4f89-41d3-9a0c-0305e82c3301')
-    expect(io.files.get('/state/device.json')).toContain('3f2504e0')
+    expect(io.files.get(DEVICE_FILE)).toContain('3f2504e0')
   })
 
   it('is stable across calls — the whole point', async () => {
     const io = makeFakeIO({ uuids: ['3f2504e0-4f89-41d3-9a0c-0305e82c3301', 'aaaaaaaa-4f89-41d3-9a0c-0305e82c3301'] })
-    const first = await readOrCreateDeviceId(io, '/state')
-    const second = await readOrCreateDeviceId(io, '/state')
+    const first = await readOrCreateDeviceId(io, STATE_DIR)
+    const second = await readOrCreateDeviceId(io, STATE_DIR)
     expect(second).toBe(first)
   })
 
@@ -542,39 +558,39 @@ describe('readOrCreateDeviceId', () => {
     // Renaming a machine must not re-register it as a new device, and every VM
     // in a fleet is called `ubuntu`.
     const io = makeFakeIO({})
-    const id = await readOrCreateDeviceId(io, '/state')
+    const id = await readOrCreateDeviceId(io, STATE_DIR)
     expect(id.toLowerCase()).not.toContain(os.hostname().toLowerCase())
     expect(isValidDeviceId(id)).toBe(true)
   })
 
   it('survives a machine rename (the file is what matters)', async () => {
     const io = makeFakeIO({
-      files: { '/state/device.json': JSON.stringify({ v: 1, deviceId: '3f2504e0-4f89-41d3-9a0c-0305e82c3301' }) },
+      files: { [DEVICE_FILE]: JSON.stringify({ v: 1, deviceId: '3f2504e0-4f89-41d3-9a0c-0305e82c3301' }) },
     })
-    expect(await readOrCreateDeviceId(io, '/state')).toBe('3f2504e0-4f89-41d3-9a0c-0305e82c3301')
+    expect(await readOrCreateDeviceId(io, STATE_DIR)).toBe('3f2504e0-4f89-41d3-9a0c-0305e82c3301')
   })
 
   it('accepts a legacy bare-UUID file', async () => {
-    const io = makeFakeIO({ files: { '/state/device.json': '3f2504e0-4f89-41d3-9a0c-0305e82c3301\n' } })
-    expect(await readOrCreateDeviceId(io, '/state')).toBe('3f2504e0-4f89-41d3-9a0c-0305e82c3301')
+    const io = makeFakeIO({ files: { [DEVICE_FILE]: '3f2504e0-4f89-41d3-9a0c-0305e82c3301\n' } })
+    expect(await readOrCreateDeviceId(io, STATE_DIR)).toBe('3f2504e0-4f89-41d3-9a0c-0305e82c3301')
   })
 
   it('regenerates when the file is garbage or holds a bad id', async () => {
     for (const contents of ['{"v":1,"deviceId":"not-a-uuid"}', 'total garbage', '{}']) {
-      const io = makeFakeIO({ files: { '/state/device.json': contents } })
-      expect(isValidDeviceId(await readOrCreateDeviceId(io, '/state'))).toBe(true)
+      const io = makeFakeIO({ files: { [DEVICE_FILE]: contents } })
+      expect(isValidDeviceId(await readOrCreateDeviceId(io, STATE_DIR))).toBe(true)
     }
   })
 
   it('honors an environment override for CI', async () => {
     const io = makeFakeIO({ env: { AGENTSYNC_DEVICE_ID: '3f2504e0-4f89-41d3-9a0c-0305e82c3301' } })
-    expect(await readOrCreateDeviceId(io, '/state')).toBe('3f2504e0-4f89-41d3-9a0c-0305e82c3301')
+    expect(await readOrCreateDeviceId(io, STATE_DIR)).toBe('3f2504e0-4f89-41d3-9a0c-0305e82c3301')
     expect(io.files.size).toBe(0) // nothing written
   })
 
   it('ignores an invalid environment override', async () => {
     const io = makeFakeIO({ env: { AGENTSYNC_DEVICE_ID: 'nope' } })
-    expect(isValidDeviceId(await readOrCreateDeviceId(io, '/state'))).toBe(true)
+    expect(isValidDeviceId(await readOrCreateDeviceId(io, STATE_DIR))).toBe(true)
   })
 
   it('still returns an id when the home directory is read-only', async () => {
@@ -584,7 +600,7 @@ describe('readOrCreateDeviceId', () => {
       e.code = 'EROFS'
       throw e
     }
-    expect(isValidDeviceId(await readOrCreateDeviceId(io, '/state'))).toBe(true)
+    expect(isValidDeviceId(await readOrCreateDeviceId(io, STATE_DIR))).toBe(true)
   })
 
   it('writes the file 0600', async () => {
@@ -595,7 +611,7 @@ describe('readOrCreateDeviceId', () => {
       if (mode !== undefined) modes.push(mode)
       return inner(p, c, mode)
     }
-    await readOrCreateDeviceId(io, '/state')
+    await readOrCreateDeviceId(io, STATE_DIR)
     expect(modes).toEqual([0o600])
   })
 })
@@ -826,7 +842,16 @@ describe('detectHost on the real host', () => {
     expect(await fsp.readFile(path.join(dir, 'device.json'), 'utf8')).toContain(a.deviceId)
   })
 
-  it('writes the device id 0600', async () => {
+  // POSIX only. Windows has no POSIX mode bits: libuv synthesizes 0666/0444
+  // from the read-only attribute, and `atomic.ts` deliberately never chmods
+  // there because doing so would clear that attribute or fail outright. So this
+  // asserts a guarantee the platform genuinely makes on macOS and Linux — where
+  // a world-readable device file on a shared box is a real defect — and cannot
+  // make on Windows, where confidentiality comes from the inherited NTFS ACL on
+  // %LOCALAPPDATA% and Node exposes no way to read it. There is nothing honest
+  // to assert in its place here; the Windows half of the mode contract is
+  // covered by atomic.test.ts ("reports no mode on Windows").
+  it.skipIf(process.platform === 'win32')('writes the device id 0600', async () => {
     const io: HostIO = { ...nodeHostIO, env: { ...process.env, AGENTSYNC_STATE_DIR: dir } }
     await detectHost({ io })
     expect((await fsp.stat(path.join(dir, 'device.json'))).mode & 0o777).toBe(0o600)

@@ -22,6 +22,7 @@ import {
   pathOf,
   readManifest,
   readText,
+  samePath,
   storeById,
   writeFixture,
   type TempHome,
@@ -114,7 +115,9 @@ describe('cursor adapter', () => {
         .locations(t.host)
         .find((s) => s.id === STORE.projectMcp) as StoreDescriptor
 
-      expect(resolved.location).toMatchObject({ path: join(projectRoot, '.cursor', 'mcp.json') })
+      expect(samePath((resolved.location as { path: string }).path)).toBe(
+        samePath(join(projectRoot, '.cursor', 'mcp.json')),
+      )
       expect(relative.location).toMatchObject({ path: '.cursor/mcp.json' })
 
       expect((await cursorAdapter.read(resolved, t.host)).exists).toBe(true)
@@ -170,7 +173,9 @@ describe('cursor adapter', () => {
       // Zed, where several stores collapse onto one file and must not.
       const manifest = await readManifest(t.host, result.rollbackId)
       expect(manifest.tokens).toHaveLength(2)
-      expect(manifest.tokens.map((tok) => tok.path).sort()).toEqual([mcp, permissions].sort())
+      expect(manifest.tokens.map((tok) => samePath(tok.path)).sort()).toEqual(
+        [mcp, permissions].map(samePath).sort(),
+      )
     })
 
     it('keeps the comments and trailing commas in permissions.json', async () => {

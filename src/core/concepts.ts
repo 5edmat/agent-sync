@@ -154,5 +154,40 @@ export function resolveStorePath(path: string, ctx?: { projectRoot: string }): s
   if (isAbsolute) return path
   // Project-relative. Without a project context there is no correct base, so
   // fall back to cwd and let the caller decide whether that is acceptable.
-  return ctx ? `${ctx.projectRoot.replace(/[/\\]+$/, '')}/${path}` : path
+  if (!ctx) return path
+
+  const root = ctx.projectRoot.replace(/[/\\]+$/, '')
+  const sep = looksLikeWindowsPath(root) ? '\\' : '/'
+  // Rewrite separators on BOTH sides so the result comes out in one flavour
+  // however the caller happened to spell the root. A leading UNC `\\` is a
+  // prefix rather than a separator run, so it has to survive the rewrite.
+  const unc = sep === '\\' && /^[/\\]{2}/.test(root)
+  const body = (unc ? root.slice(2) : root).replace(/[/\\]+/g, sep)
+  return `${unc ? '\\\\' : ''}${body}${sep}${path.replace(/[/\\]+/g, sep)}`
+}
+
+/**
+ * Which separator does this base path speak?
+ *
+ * Deliberately NOT `node:path`. `locations()` must be able to build a *Windows*
+ * path table while running on the macOS control plane — that is why the adapters
+ * carry their own `posix`/`win` joiners — so `path.join` here would resolve to
+ * the separator of the machine we happen to be running on, not the machine the
+ * path describes.
+ *
+ * Hardcoding `/` (what this used to do) had the same defect from the other end:
+ * on Windows it produced `C:\repo/.cursor/mcp.json`. Node opens that file
+ * happily, which is exactly why it went unnoticed — but `path.resolve` rewrites
+ * it to all-backslashes, so the rollback token `withBackup()` records stopped
+ * being string-equal to the descriptor path it came from, and the two "routes to
+ * the same file" that `read()` and `apply()` are supposed to agree on disagreed.
+ *
+ * The root is the only evidence available about which flavour of path this is,
+ * and it is reliable: a drive letter or a UNC prefix is unambiguous, and a root
+ * that uses backslashes and no forward slashes cannot be POSIX (a literal `\` is
+ * a legal POSIX filename character, so we require the absence of `/` too).
+ */
+function looksLikeWindowsPath(root: string): boolean {
+  if (/^[a-zA-Z]:[\\/]/.test(root) || root.startsWith('\\\\')) return true
+  return root.includes('\\') && !root.includes('/')
 }

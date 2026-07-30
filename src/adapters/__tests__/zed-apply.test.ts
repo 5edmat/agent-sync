@@ -29,6 +29,7 @@ import {
   pathOf,
   readManifest,
   readText,
+  samePath,
   storeById,
   writeFixture,
   type TempHome,
@@ -348,7 +349,7 @@ describe('zed adapter', () => {
       expect(await backupCount(settings)).toBe(1)
       const manifest = await readManifest(t.host, result.rollbackId)
       expect(manifest.tokens).toHaveLength(1)
-      expect(manifest.tokens[0]?.path).toBe(settings)
+      expect(samePath(manifest.tokens[0]?.path ?? '')).toBe(samePath(settings))
 
       // The unrelated peer key — a different store over the same file, not in
       // this plan — is untouched, comment and all.
