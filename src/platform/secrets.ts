@@ -326,10 +326,14 @@ export function decodeSecretFileName(name: string): string | null {
  * control on someone else's machine, and a stripped or locked-down image is
  * exactly where a secrets backend must not quietly stop working.
  *
- * `-ErrorAction Stop` so a genuine load failure surfaces as our error rather
- * than as a confusing "command not found" further down the script.
+ * Best-effort, NOT `-ErrorAction Stop`. That was the first attempt and CI
+ * rejected it: the same runner emits "error occurred while loading the extended
+ * type data file" from this module, which is cosmetic — the cmdlets work — and
+ * `Stop` turned a working import into a hard failure. So the import is a nudge,
+ * not a precondition. If the cmdlet genuinely is not there, the call below
+ * fails on its own and we surface that instead.
  */
-const PS_PRELUDE = 'Import-Module Microsoft.PowerShell.Security -ErrorAction Stop;'
+const PS_PRELUDE = 'Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue;'
 
 export class WindowsDpapiStore implements SecretStore {
   readonly backend = 'windows-dpapi' as const
