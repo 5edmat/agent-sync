@@ -41,18 +41,29 @@ const posix = (...parts: string[]) => parts.join('/').replace(/\/+/g, '/')
 const win = (...parts: string[]) => parts.join('\\').replace(/\\+/g, '\\')
 
 /**
- * Filesystem verification is host-specific and we have only ever inspected a
- * real install on macOS. The same homedir-relative path is therefore only
- * *inferred* on Linux and Windows until the cross-OS conformance job confirms
- * it on a real runner.
+ * How well do we know this homedir-relative path on THIS host?
  *
- * Consequence, deliberately: `apply()` refuses to write to inferred locations,
- * so writes are gated off on Windows/Linux until CI proves the table. Refusing
- * to write is the correct failure mode — a wrong path corrupts a config we were
- * trusted with. CI flipping these to verified is what unlocks those platforms.
+ * `verified-fs` on macOS, because a real install was inspected there.
+ * `verified-doc` everywhere else — NOT `inferred`, which is what this used to
+ * return and was wrong.
+ *
+ * The reasoning it got backwards: "we have only ever seen this on macOS" is a
+ * statement about our travels, not about the path. Anthropic documents user
+ * settings once, as `~/.claude/`, with no per-OS variation and an explicit note
+ * that on Windows it resolves to `%USERPROFILE%\.claude`. A documented path is
+ * `verified-doc` on every platform the documentation covers; calling it
+ * `inferred` conflated "unseen" with "guessed" and gated writes off for every
+ * Linux and Windows user on the strength of where the author happened to sit.
+ *
+ * What the cross-OS conformance run changed is the other half: the engine's
+ * writes, locks, backups and path handling are now proven on real Windows,
+ * Linux and WSL runners. So the remaining doubt was never about these paths.
+ *
+ * `verified-fs` still means what it says — seen on a real install — and no
+ * amount of CI can grant it, because the runners have no Claude Code on them.
  */
 function fsVerified(host: HostEnv): Provenance {
-  return host.os === 'macos' && host.runtime === 'native' ? 'verified-fs' : 'inferred'
+  return host.os === 'macos' && host.runtime === 'native' ? 'verified-fs' : 'verified-doc'
 }
 
 /** [V-doc] Managed policy roots. Note Linux and WSL share the same root. */

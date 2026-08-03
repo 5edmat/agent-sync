@@ -16,8 +16,9 @@ actually installed. See [What refuses a write](#what-refuses-a-write).
 npm install -g @5edmat/agent-sync      # or: npx @5edmat/agent-sync <command>
 ```
 
-Requires Node 20.11+. Works on macOS, Linux, WSL and Windows — though writes are
-currently gated on Windows and Linux, see [What refuses a write](#what-refuses-a-write).
+Requires Node 20.11+, and works on macOS, Linux, WSL and Windows — all four are
+covered by the [conformance matrix](#cross-platform). A handful of paths whose
+location was never documented stay read-only; `agentsync doctor` names them.
 
 ```bash
 agentsync init --adopt    # capture this machine's config as your baseline
@@ -212,10 +213,16 @@ Every path table entry declares how it was verified:
 - `verified-fs` — confirmed against a real install
 - `inferred` — reasoned from convention
 
-**`apply()` refuses to write to `inferred` locations.** Since paths have only
-been filesystem-verified on macOS, writes are currently gated off on Windows and
-Linux. Being useless on an unverified platform beats corrupting it; the CI
-conformance matrix is what clears them.
+**`apply()` refuses to write to `inferred` locations.** What remains inferred is
+now a short list rather than a platform: Claude Code's keybindings file, Cursor's
+Windows Group Policy registry key (the docs confirm ADMX exists but never print
+the key), and Zed's Windows tasks path.
+
+The homedir paths were briefly marked `inferred` on Windows and Linux, which was
+wrong — "we have only ever seen this on macOS" is a statement about the author's
+travels, not about the path. Anthropic documents `~/.claude/` once for every
+platform. Being useless on an unverified platform still beats corrupting it, but
+the bar is documentation, not personal acquaintance.
 
 ### 7. Detection gating
 
@@ -295,9 +302,9 @@ docs/            adapter-fit.md · zed-spike.md
 
 ## What doesn't
 
-- `apply()` for Cursor and Zed — in progress
-- Writes on Windows and Linux (provenance-gated)
 - No backend exists; the web app runs against typed mocks
+- Nothing syncs between machines yet — the vault is real and tested, the
+  control plane is still a typed contract with no server behind it
 - The web app predates `concept` / `subtree` / `activeWhen`, so it cannot yet
   group rows across tools or warn that writing `.rules` disables `CLAUDE.md`
 
