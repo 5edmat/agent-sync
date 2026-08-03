@@ -363,10 +363,30 @@ export class WindowsDpapiStore implements SecretStore {
     )
   }
 
+  /**
+   * Probe the cmdlet we actually depend on, not just that PowerShell runs.
+   *
+   * The old probe wrote "ok" and called it a day, so DPAPI reported itself
+   * available on hosts where `Microsoft.PowerShell.Security` cannot load — and
+   * the failure only surfaced on the first `set()`, by which point we had told
+   * the user their secrets had OS protection. A GitHub Windows runner is
+   * exactly such a host: the module fails to autoload, and importing it
+   * explicitly errors on its extended type data.
+   *
+   * Reporting unavailable lets `selectSecretStore` degrade to the encrypted
+   * file, which is the honest outcome: a working fallback beats a backend that
+   * claims to work and then does not.
+   */
   async isAvailable(): Promise<boolean> {
     try {
-      const r = await this.ps('[Console]::Out.Write("ok")')
-      return r.code === 0 && r.stdout.includes('ok')
+      const r = await this.ps(
+        [
+          PS_PRELUDE,
+          "$ss = ConvertTo-SecureString -String 'probe' -AsPlainText -Force;",
+          '[Console]::Out.Write((ConvertFrom-SecureString -SecureString $ss).Length -gt 0)',
+        ].join(' '),
+      )
+      return r.stdout.trim().toLowerCase() === 'true'
     } catch {
       return false
     }

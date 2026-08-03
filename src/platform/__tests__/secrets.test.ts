@@ -571,7 +571,17 @@ describe('MemorySecretStore', () => {
 // ---------------------------------------------------------------------------
 
 describe('selectSecretStore', () => {
-  const okExec: ExecFn = async () => ({ code: 0, stdout: 'ok', stderr: '' })
+  // A host where every backend's probe succeeds. DPAPI's probe now exercises
+  // ConvertTo-SecureString rather than just checking PowerShell runs, so the
+  // fake has to answer that too — a host where the Security module cannot load
+  // must report DPAPI unavailable rather than fail on the first write.
+  const okExec: ExecFn = async (_cmd, args) => {
+    const script = (args ?? []).join(' ')
+    if (script.includes('ConvertFrom-SecureString')) {
+      return { code: 0, stdout: 'True', stderr: '' }
+    }
+    return { code: 0, stdout: 'ok', stderr: '' }
+  }
   const failExec: ExecFn = async () => ({ code: 1, stdout: '', stderr: 'no' })
 
   it('picks the Keychain on macOS', async () => {
