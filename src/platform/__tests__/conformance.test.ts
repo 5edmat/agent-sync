@@ -150,7 +150,15 @@ describe.runIf(isWindows)('windows: DPAPI round trip', () => {
    */
   it('either round-trips through DPAPI or degrades honestly', async () => {
     const host = await detectHost()
-    const sel = await selectSecretStore(host, { passphrase: 'conformance-pass' })
+    // A passphrase alone is not enough: EncryptedFileStore also needs somewhere
+    // to put the vault, and selectSecretStore returns null for a backend it
+    // cannot construct — so without a path the whole ladder ends in
+    // NoSecretBackendError and this test cannot tell "DPAPI missing" from
+    // "nothing configured". Same setup the Linux leg needs.
+    const sel = await selectSecretStore(host, {
+      passphrase: 'conformance-pass',
+      vaultFile: join(work, 'secrets.vault.json'),
+    })
 
     if (sel.chosen !== 'windows-dpapi') {
       // Degraded. The point is that the probe caught it BEFORE we promised
